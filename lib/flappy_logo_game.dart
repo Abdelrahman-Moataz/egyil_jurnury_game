@@ -1,121 +1,73 @@
-import 'dart:async';
 import 'dart:math';
-import 'package:flame/components.dart';
+import 'package:flame/components.dart' hide World;
+import 'package:flame/events.dart';
 import 'package:flame/game.dart';
+import 'package:flame/timer.dart';
 import 'package:flutter/material.dart';
 import 'game_manager.dart';
+import 'game_over_panel.dart';
 import 'player.dart';
 import 'pipe.dart';
-import 'flap_button.dart';
+import 'world.dart';
+import 'ground.dart';
 
-class FlappyLogoGame extends FlameGame {
+class FlappyLogoGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   late Player player;
   late GameManager gameManager;
   late TextComponent scoreText;
-  late TextComponent gameOverText;
-  late TextComponent poweredByText;
   Timer? pipeTimer;
-  bool _isMounted = false;
 
   @override
   Future<void> onLoad() async {
-    // Add the game manager
-    add(gameManager = GameManager());
+    // Game Manager
+    gameManager = GameManager();
+    add(gameManager);
+
+    // World and Ground
+    // These are part of the game world, so we add them directly.
+    add(World());
+    add(Ground());
 
     // Player
     player = Player();
     add(player);
 
-    // Score display
+    // Score - This is a HUD element and should be added to the viewport.
     scoreText = TextComponent(
       text: '0',
       anchor: Anchor.center,
-    )..textRenderer = TextPaint(
-        style: const TextStyle(fontSize: 40, color: Colors.white),
-      );
-    add(scoreText);
-
-    // Game over text
-    gameOverText = TextComponent(
-      text: 'Game Over',
-      anchor: Anchor.center,
       textRenderer: TextPaint(
-        style: const TextStyle(fontSize: 60, color: Colors.red, fontWeight: FontWeight.bold),
+        style: const TextStyle(
+          fontSize: 50,
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          shadows: [
+            Shadow(blurRadius: 8, color: Colors.black, offset: Offset(3, 3))
+          ],
+        ),
       ),
     );
+    camera.viewport.add(scoreText);
 
-    // Powered by text
-    poweredByText = TextComponent(
-      text: 'Powered with LookersHup',
-      anchor: Anchor.bottomCenter,
-    )..textRenderer = TextPaint(
-        style: const TextStyle(fontSize: 20, color: Colors.white),
-      );
-    add(poweredByText);
-
-    // Flap button
-    add(FlapButton());
-
-    super.onLoad();
+    await super.onLoad();
   }
 
   @override
   void onMount() {
-    if (!_isMounted) {
-      // Background
-      add(RectangleComponent(
-        size: size,
-        paint: Paint()..color = const Color(0xFFa2d2ff),
-        priority: -1,
-      ));
-
-      // Ground
-      add(RectangleComponent(
-        position: Vector2(0, size.y - 100),
-        size: Vector2(size.x, 100),
-        paint: Paint()..color = const Color(0xFFb5838d),
-        priority: -1,
-      ));
-      scoreText.position = Vector2(size.x / 2, 50);
-      gameOverText.position = Vector2(size.x / 2, size.y / 2 - 100);
-      poweredByText.position = Vector2(size.x / 2, size.y - 10);
-      resetGame();
-      _isMounted = true;
-    }
     super.onMount();
+    scoreText.position = Vector2(size.x / 2, 80);
+    resetGame();
   }
 
   @override
   void update(double dt) {
     super.update(dt);
-
     if (gameManager.isGameOver) return;
 
     pipeTimer?.update(dt);
 
-    // Ground collision
-    if (player.y > size.y - 125) {
-      player.y = size.y - 125;
-      gameOver();
-    }
-
-    // Ceiling collision
-    if (player.y < 25) {
-      player.y = 0;
-      gameOver();
-    }
-
-    // Check for collisions with pipes
-    for (final child in children) {
-      if (child is Pipe && player.toRect().overlaps(child.toRect())) {
-        gameOver();
-        return;
-      }
-    }
-
-    // Update the score
-    final pipes = children.whereType<Pipe>().toList();
-    for (final pipe in pipes) {
+    // Update score by iterating over a copy of the list
+    for (final pipe in children.whereType<Pipe>().toList()) {
       if (!pipe.scored && pipe.x + pipe.width < player.x) {
         pipe.scored = true;
         gameManager.increaseScore();
@@ -126,46 +78,49 @@ class FlappyLogoGame extends FlameGame {
 
   void addPipePair() {
     final random = Random();
-    final double pipeHeight = random.nextDouble() * (size.y - gameManager.pipeGap - 300) + 100;
+    final double pipeHeight =
+        random.nextDouble() * (size.y - gameManager.pipeGap - 350) + 150;
 
-    final topPipe = Pipe(
+    add(Pipe(
       position: Vector2(size.x, 0),
-      size: Vector2(60, pipeHeight),
-    );
-    add(topPipe);
+      size: Vector2(90, pipeHeight),
+      isTop: true,
+    ));
 
-    final bottomPipe = Pipe(
+    add(Pipe(
       position: Vector2(size.x, pipeHeight + gameManager.pipeGap),
-      size: Vector2(60, size.y - pipeHeight - gameManager.pipeGap),
-    );
-    add(bottomPipe);
+      size: Vector2(90, size.y - pipeHeight - gameManager.pipeGap - 100),
+      isTop: false,
+    ));
   }
 
   void gameOver() {
+    if (gameManager.isGameOver) return;
     gameManager.isGameOver = true;
     pipeTimer?.stop();
-    if (!children.contains(gameOverText)) {
-      add(gameOverText);
-    }
+    // Add the GameOverPanel to the camera's viewport to make it a HUD element.
+    camera.viewport.add(GameOverPanel());
   }
 
   void resetGame() {
     gameManager.reset();
     player.reset();
     scoreText.text = '0';
-    if (children.contains(gameOverText)) {
-      remove(gameOverText);
-    }
-
-    // Remove all pipes
-    final pipes = children.whereType<Pipe>().toList();
-    for (var pipe in pipes) {
-      pipe.removeFromParent();
-    }
-
-    // Restart the pipe timer
+    // Remove the GameOverPanel from the viewport.
+    camera.viewport.removeAll(camera.viewport.children.whereType<GameOverPanel>());
+    // Remove all pipes from the game world.
+    removeAll(children.whereType<Pipe>());
     pipeTimer?.stop();
-    pipeTimer = Timer(1.5, repeat: true, onTick: addPipePair);
-    pipeTimer?.start();
+    pipeTimer = Timer(2, repeat: true, onTick: addPipePair)..start();
+  }
+
+  @override
+  void onTapUp(TapUpEvent event) {
+    super.onTapUp(event);
+    if (gameManager.isGameOver) {
+      resetGame();
+    } else {
+      player.flyUp();
+    }
   }
 }
